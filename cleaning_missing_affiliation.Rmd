@@ -1,0 +1,288 @@
+---
+title: "Author affiliation - Normalization and missing data"
+output: html_notebook
+---
+
+```{r setup}
+
+library(tidyverse) # the girls
+library(reclin) # comparing similarity between data 
+library(fuzzyjoin) 
+library(stringi) # ascii
+library(stringr)
+
+library(googleway) # google api
+
+library(stringr) # normalization 
+
+library(pbapply) #lapply status bar 
+```
+
+
+```{r import-country-names}
+
+# import list of affiliations
+affiliation_health <- read_csv("~/Mirror/scielo_health/health_data/affiliation_health.csv", 
+    col_types = cols(X1 = col_skip()))
+
+# import list of English, Spanish and Portuguese countries
+en_countries <- read_csv("en_countries.csv", 
+    col_types = cols(alpha2 = col_skip(), 
+        id = col_skip()))
+
+es_countries <- read_csv("es_countries.csv", 
+    col_types = cols(alpha2 = col_skip(), 
+        id = col_skip()))
+
+pt_countries <- read_csv("pt_countries.csv", 
+    col_types = cols(alpha2 = col_skip(), 
+        id = col_skip()))
+```
+
+
+```{r lowercase}
+
+# make country names lowercase 
+affiliation_health$country <- tolower(affiliation_health$country)
+es_countries$name <- tolower(es_countries$name)
+en_countries$name <- tolower(en_countries$name)
+pt_countries$name <- tolower(pt_countries$name)
+```
+
+
+```{r}
+
+# remove accents from the country names in all the databases
+affiliation_health$country <- iconv(affiliation_health$country, to="ASCII//TRANSLIT")
+affiliation_health$country <- str_replace_all(affiliation_health$country, "[^[:alnum:][:space:]]", "") # remove punctuation 
+
+# remove accents 
+es_countries$name <- iconv(es_countries$name, to="ASCII//TRANSLIT")
+es_countries$name <- str_replace_all(es_countries$name, "[^[:alnum:][:space:]]", "")
+
+# remove accents
+pt_countries$name <- iconv(pt_countries$name, to="ASCII//TRANSLIT")
+pt_countries$name <- str_replace_all(pt_countries$name, "[^[:alnum:][:space:]]", "")
+
+```
+
+
+```{r normalizing-by-hand}
+
+# remove digits 
+affiliation_health$country <- str_replace_all(affiliation_health$country, "[:digit:]", "")
+
+# remove trailing whitespace
+affiliation_health$country <- str_trim(affiliation_health$country, side = "both")
+```
+
+
+```{r}
+
+# normalizing country names 
+affiliation_health$country[grepl("usa", affiliation_health$country)] <- "united states of america"
+
+affiliation_health$country[grepl("united states", affiliation_health$country)] <- "united states of america"
+
+affiliation_health$country[grepl("eua", affiliation_health$country)] <- "united states of america"
+
+affiliation_health$country[agrepl("u.s.a", affiliation_health$country)] <- "united states of america"
+
+affiliation_health$country[grepl("estados unidos", affiliation_health$country)] <- "united states of america"
+
+affiliation_health$country[grepl("brasil", affiliation_health$country)] <- "brazil"
+
+affiliation_health$country[grepl("uk", affiliation_health$country)] <- "united kingdom of great britain and northern ireland"
+
+affiliation_health$country[grepl("u.k.", affiliation_health$country)] <- "united kingdom of great britain and northern ireland"
+
+affiliation_health$country[grepl("united kingdom", affiliation_health$country)] <- "united kingdom of great britain and northern ireland"
+affiliation_health$country[grepl("northern ireland", affiliation_health$country)] <- "united kingdom of great britain and northern ireland"
+
+affiliation_health$country[grepl("england", affiliation_health$country)] <- "united kingdom of great britain and northern ireland"
+
+affiliation_health$country[grepl("inglaterra", affiliation_health$country)] <- "united kingdom of great britain and northern ireland"
+
+affiliation_health$country[grepl("uruguay", affiliation_health$country)] <- "uruguay"
+
+affiliation_health$country[grepl("venezuela", affiliation_health$country)] <- "venezuela"
+
+affiliation_health$country[grepl("china", affiliation_health$country)] <- "china"
+
+affiliation_health$country[grepl("br", affiliation_health$country)] <- "brazil"
+
+affiliation_health$country[grepl("argentina", affiliation_health$country)] <- "argentina"
+
+affiliation_health$country[grepl("ecuad", affiliation_health$country)] <- "ecuador"
+
+affiliation_health$country[grepl("yemen", affiliation_health$country)] <- "yemen"
+
+affiliation_health$country[grepl("xico", affiliation_health$country)] <- "mexico"
+
+affiliation_health$country[grepl("netherlands", affiliation_health$country)] <- "netherlands"
+
+affiliation_health$country[grepl("korea", affiliation_health$country)] <- "south korea"
+
+affiliation_health$country[grepl("corea", affiliation_health$country)] <- "south korea"
+
+affiliation_health$country[grepl("uu", affiliation_health$country)] <- "united states of america"
+
+affiliation_health$country[grepl("czech republic", affiliation_health$country)] <- "czechia"
+
+affiliation_health$country[grepl("esp", affiliation_health$country)] <- "spain"
+
+affiliation_health$country[grepl("holanda", affiliation_health$country)] <- "netherlands"
+
+affiliation_health$country[grepl("argen", affiliation_health$country)] <- "argentina"
+
+affiliation_health$country[grepl("macedonia", affiliation_health$country)] <- "macedonia"
+
+affiliation_health$country[grepl("russia", affiliation_health$country)] <- "russia"
+
+affiliation_health$country[grepl("viet", affiliation_health$country)] <- "vietnam"
+
+affiliation_health$country[grepl("trinidad", affiliation_health$country)] <- "trinidad and tobago"
+
+affiliation_health$country[grepl("syria", affiliation_health$country)] <- "syria"
+
+affiliation_health$country[grepl("alemania", affiliation_health$country)] <- "germany"
+
+affiliation_health$country[grepl("basil", affiliation_health$country)] <- "brazil"
+
+affiliation_health$country[grepl("deutschland", affiliation_health$country)] <- "germany"
+
+affiliation_health$country[grepl("costa ri", affiliation_health$country)] <- "costa rica"
+
+affiliation_health$country[grepl("estado plurinacional de bolivia", affiliation_health$country)] <- "bolivia"
+
+affiliation_health$country[grepl("méjico", affiliation_health$country)] <- "mexico"
+
+affiliation_health$country[grepl("mx", affiliation_health$country)] <- "mexico"
+
+affiliation_health$country[grepl("panam", affiliation_health$country)] <- "panama"
+
+affiliation_health$country[grepl("iran", affiliation_health$country)] <- "iran"
+
+affiliation_health$country[grepl("south af", affiliation_health$country)] <- "south africa"
+
+affiliation_health$country[grepl("america", affiliation_health$country)] <- "united states of america"
+
+affiliation_health$country[grepl("united states america", affiliation_health$country)] <- "united states of america"
+
+affiliation_health$country[grepl("domini", affiliation_health$country)] <- "dominican republic"
+
+affiliation_health$country[grepl("alger", affiliation_health$country)] <- "algeria"
+
+# removing unecessary words
+affiliation_health$country <- str_replace(affiliation_health$country, "republica ", "")
+affiliation_health$country <- str_replace(affiliation_health$country, "republic ", "")
+affiliation_health$country <- str_replace(affiliation_health$country, "rep ", "")
+affiliation_health$country <- str_replace(affiliation_health$country, "oriental del ", "")
+affiliation_health$country <- str_replace(affiliation_health$country, "de ", "")
+affiliation_health$country <- str_replace(affiliation_health$country, "del ", "")
+affiliation_health$country <- str_replace(affiliation_health$country, "of ", "")
+
+```
+
+
+```{r}
+
+# joining country dictionaries with affiliation_heatlh
+affiliation_health_cleaned <- affiliation_health %>%
+  full_join(en_countries, by = c("country" = "name")) %>%
+  full_join(es_countries, by = c("country" = "name"), suffix = c("_en", "_es")) %>%
+  full_join(pt_countries, by = c("country" = "name")) %>%
+  
+  mutate(alpha = ifelse(!is.na(alpha3_en), alpha3_en, ifelse(!is.na(alpha3_es), alpha3_es, alpha3))) %>%
+  
+  select(institution, country, alpha, aff_number, uid)
+
+affiliation_health_cleaned
+
+country_misp <- affiliation_health_cleaned %>%
+  filter(!is.na(country)) %>%
+  filter(is.na(alpha)) %>%
+    select(institution, country, uid)
+
+country_misp
+```
+
+
+```{r}
+
+# function that runs the institution through the Google Places API and pulls the country from the first result
+google_fp_fun <- function(string) {
+  
+  place <- google_find_place(
+    input = string,
+    inputtype = "textquery",
+    key = key)
+  
+  print(place$candidates$formatted_address[1])
+  
+    last(
+      unlist(
+          try(strsplit(place$candidates$formatted_address[1], ","))))
+    
+}
+```
+
+
+```{r}
+# lists of the institutions 
+institutions_misp <- country_misp$institution
+
+# run the function
+api_results <- pblapply(institutions_misp, google_fp_fun)
+
+# lowercase the results
+api_results <- tolower(api_results)
+
+# add the api results back to the list of misspelled countries
+country_misp$api_results <- api_results
+
+# fixing some of the api results to match the country name list
+country_misp$api_results[grepl("united states", country_misp$api_results)] <- "united states of america"
+country_misp$api_results[grepl("united kingdom", country_misp$api_results)] <- "united kingdom of great britain and northern ireland"
+
+# remove trailing white spice 
+country_misp$api_results <- str_trim(country_misp$api_results, side = "both")
+
+# add 
+country_misp_final <- country_misp %>%
+  left_join(en_countries, by = c("api_results" = "name")) %>%
+    select(institution, alpha3)
+
+country_misp_final
+```
+
+```{r}
+
+affiliation_health_cleaned <- affiliation_health_cleaned %>%
+    left_join(country_misp_final, by = "institution") %>%
+    unique() %>%
+    mutate(alpha2 = ifelse(is.na(alpha), alpha3, alpha)) %>%
+    select(-alpha, -alpha3)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
