@@ -1,0 +1,182 @@
+---
+title: "Country misspelling"
+output: html_notebook
+---
+
+
+```{r setup}
+library(tidyverse)
+
+library(googleway) # google api
+
+library(stringr)
+
+library(pbapply)
+```
+
+
+```{r api-test}
+key <- "AIzaSyAhHiZQpP8srdv56y3TFw9NfXdKK4CudW4"
+
+test_api <- google_find_place(input = institutions_misp[52],
+                  inputtype = "textquery",
+                  key = key)
+
+test_api
+test_api$candidates$formatted_address
+
+country_misp
+```
+
+
+```{r}
+country_list <- read_csv("en_countries.csv")
+country_misp <- read_csv("country_mispelling.csv")
+
+institutions_misp <- country_misp$institution
+country_list <- en_countries$name
+
+
+google_fp_fun <- function(string) {
+  
+  place <- google_find_place(
+    input = string,
+    inputtype = "textquery",
+    key = key)
+  
+  print(place$candidates$formatted_address[1])
+  
+    last(
+      unlist(
+          try(strsplit(place$candidates$formatted_address[1], ","))))
+    
+}
+
+
+google_fp_fun(institutions_misp[52])
+
+
+
+
+
+api_results <- pblapply(institutions_misp, google_fp_fun)
+
+api_results
+```
+
+
+```{r}
+
+country_misp <- read_csv("country_mispelling.csv")
+
+# adding the results back to the mispelled dataframe
+country_misp$api_results <- unlist(api_results)
+
+# lowercase
+country_misp$api_results <- tolower(country_misp$api_results)
+
+
+# making the names match with the country list and fixing errors 
+country_misp$api_results[grepl("united states", country_misp$api_results)] <- "united states of america"
+country_misp$api_results[grepl("republic of korea", country_misp$api_results)] <- "south korea"
+country_misp$api_results[grepl("united kingdom", country_misp$api_results)] <- "united kingdom of great britain and northern ireland"
+
+
+# remove numbers
+country_misp$api_results <- str_replace_all(country_misp$api_results, "[:digit:]", "")
+country_misp$api_results <- str_trim(country_misp$api_results, side = "both")
+country_misp$country <- str_trim(country_misp$country, side = "both")
+
+
+# removing republic 
+country_misp$country <- str_replace(country_misp$country, "república ", "")
+country_misp$country <- str_replace(country_misp$country, "rep ", "")
+country_misp$country <- str_replace(country_misp$country, "oriental del ", "")
+country_misp$country <- str_replace(country_misp$country, "peoples r ", "")
+country_misp$country <- str_replace(country_misp$country, "p r ", "")
+country_misp$country <- str_replace(country_misp$country, "pr ", "")
+country_misp$country <- str_replace(country_misp$country, "peoples republic of ", "")
+country_misp$country <- str_replace(country_misp$country, "republic of ", "")
+country_misp$country <- str_replace(country_misp$country, "peoples ", "")
+country_misp$country <- str_replace(country_misp$country, "de ", "")
+country_misp$country <- str_replace(country_misp$country, "del ", "")
+country_misp$country <- str_replace(country_misp$country, "united ", "")
+country_misp$country <- str_replace(country_misp$country, "republic of korea", "south korea")
+
+country_misp$country[grepl("korea", country_misp$country)] <- "south korea"
+country_misp$country[grepl("corea", country_misp$country)] <- "corea del sur"
+country_misp$country[grepl("pr china", country_misp$country)] <- "china"
+country_misp$country[grepl("trinidad", country_misp$country)] <- "trinidad and tobago"
+
+country_misp$country[grepl("xico", country_misp$country)] <- "mexico"
+
+country_misp$country[grepl("venezuela", country_misp$country)] <- "venezuela"
+
+# remove punctuation
+country_misp$country <- str_replace_all(country_misp$country, "[[:punct:]]", "")
+
+country_misp %>%
+  count(country) %>%
+  arrange(desc(n))
+```
+
+```{r}
+# import  country names
+en_countries <- read_csv("en_countries.csv", 
+    col_types = cols(alpha2 = col_skip(), 
+        id = col_skip()))
+
+es_countries <- read_csv("es_countries.csv", 
+    col_types = cols(alpha2 = col_skip(), 
+        id = col_skip()))
+# lowercase 
+en_countries$name <- tolower(en_countries$name)
+es_countries$name <- tolower(es_countries$name)
+
+# join country list with api results 
+country_misp_final <- country_misp %>%
+  full_join(en_countries, by = c("api_results" = "name")) %>%
+  full_join(en_countries, by = c("country" = "name")) %>%
+  full_join(es_countries, by = c("country" = "name")) %>%
+  
+  mutate(alpha = ifelse(!is.na(alpha3.x), alpha3.x, alpha3.y)) 
+
+country_misp_export <- country_misp_final %>%
+  select(alpha, institution)
+
+write.csv(country_misp_export, "country_misp_export.csv")
+```
+
+
+
+```{r}
+
+#addressing nas 
+na_country_misp <- country_misp_final %>%
+  filter(is.na(alpha)) 
+
+na_country_misp 
+```
+
+```{r}
+
+es_countries$name[43] == na_country_misp$country[1]
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
