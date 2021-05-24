@@ -1,0 +1,657 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup}
+
+library(tidyverse)
+
+# xml libraries
+library(XML)
+library(xml2)
+library(rvest)
+library(httr)
+library(pbapply)
+```
+
+
+This is the code from the nice redditor who asnwered my question about how to organize this import. 
+
+```{r}
+
+# setwd("root/directory/for/xml")
+# xml_files <- list.files(pattern = "xml$", recursive = T)
+# 
+# filter_xml_files <- function(xml_file) {
+#   # find node with your data, determine if it meets specification
+#   # convert to dataframe
+#   if (meets_spec) {
+#     return(dataframe)
+#   }
+# }
+# 
+# my_data <- do.call(rbind, lapply(xml_files, filter_xml_files))
+```
+
+
+```{r list-files}
+
+# listing the names of all the files in the directory
+working_directory <- "~/Desktop/scielo_articles.nosync"
+files_xml_allscielo <- dir("~/Desktop/scielo_articles.nosync", recursive = TRUE, full.names = TRUE, pattern = "\\.xml$")
+length(files_xml_allscielo)
+```
+
+
+```{r do-call-rbind-fun}
+
+# experimenting with do.call(rbind) instead of the wrapping functions below 
+
+do_call_rbind <- function(xml_files) {
+  
+  filter_scielo_files <- lapply(xml_files, filter_scielo) # creates a list the length of xml_files with parsed dataframes
+  filter_scielo_files <- filter_scielo_files[!sapply(filter_scielo_files, is.null)] # filters out xml files that did not meet the criteria and appear in the list as NULL
+  
+  file_seq <- seq_along(filter_scielo_files) # sequence up to the number of files in filter_scielo_files
+  
+  # rbind each individual section 
+  journal <- try(do.call(rbind, lapply(file_seq, function(x) {filter_scielo_files[[c(x, 1)]]})))
+  article <- try(do.call(rbind, lapply(file_seq, function(x) {filter_scielo_files[[c(x, 2)]]})))
+  author <- try(do.call(rbind, lapply(file_seq, function(x) {filter_scielo_files[[c(x, 3)]]})))
+  affiliation <- try(do.call(rbind, lapply(file_seq, function(x) {filter_scielo_files[[c(x, 4)]]})))
+  abstract <- try(do.call(rbind, lapply(file_seq, function(x) {filter_scielo_files[[c(x, 5)]]})))
+  
+  # create a list of dataframes of individually bound dataframes to be returned as my_data
+  my_data <- list(journals = journal,
+                  articles = article,
+                  authors = author,
+                  affiliation = affiliation,
+                  abstract = abstract)
+  
+  return(my_data)
+}
+```
+
+
+```{r pull-scielo-test}
+
+xml_files_test <- files_xml_allscielo[1000:3000] # this is for testing the function after any changes 
+
+my_data <- do_call_rbind(files_xml_allscielo)
+
+system.time({ do_call_rbind(files_xml_allscielo) })
+
+
+```
+
+
+
+```{r filter-scielo-fun}
+
+filter_scielo <- function(file) {
+  
+  file <- read_xml(file)
+  list_of_df <- if (search_health(file)) {
+    return(list_of_dataframes(file))
+  }
+  
+  return(list_of_df)
+}
+
+
+```
+
+
+```{r parse-all-fun}
+
+# keyword dataframe is missing 
+list_of_dataframes <- function(test_xml) {
+  
+  list <- list(journal_df = try(journal_df_fun(test_xml)),
+    article_df = try(article_df_fun(test_xml)),
+    author_df = try(author_df_fun(test_xml)),
+    affiliation_df = try(aff_df_fun(test_xml)),
+    abstract_df = try(abstract_df_fun(test_xml)))
+}
+
+```
+
+
+```{r search-fun}
+
+# health_subjects is a list i created with all of the subjects related to health sciences (in my opinion, for now) 
+# the original list of subjects was created by extracting all the unique subjects in the entire scielo database, as i could not find one listed on their website 
+
+search_health <- function(test_xml) {
+  
+  # extracting the text from the xml with the subject of the paper 
+  subject_node <- tolower(
+    xml_text(
+      xml_find_first(
+        test_xml, "//subject")))
+  
+  result <- subject_node %in% health_subjects
+  
+  return(result)
+}
+```
+
+
+
+```{r}
+
+# paths to the various nodes
+
+
+  
+  uid_node <- xml_find_first(test_xml, "/articles/article/front//unique-article-id")
+  journal_xml <- xml_find_first(test_xml, "/articles/article/front//journal-meta")
+  article_xml <- xml_find_first(test_xml, "/articles/article/front//article-meta")
+  author_xml <- xml_find_first(test_xml, "/articles/article/front//contrib-group")
+  affiliation_xml <- xml_find_first(test_xml, "/articles/article/front//aff")
+  abstract_xml <- xml_find_first(test_xml, "/articles/article/front//abstract")
+  abstract_trans_xml <- xml_find_first(test_xml, "/articles/article/front//trans-abstract")
+  keyword_xml <- xml_find_first(test_xml, "/articles/article/front//kwd-group")
+  ref_list_xml <- xml_find_first(test_xml, "/articles/article/front//ref-list")
+
+
+
+```
+
+
+### Add article type to the node list 
+
+```{r parse-article-fun}
+# parsing xml for the article dataframe
+
+article_df_fun <- function(test_xml) {
+  
+  article_xml <- xml_new_root(xml_find_first(test_xml, "/articles/article"))
+  
+  article_node_list <- c(
+    subject = "//subject",
+    article_title = "//article-title",
+    trans_title = "//trans-title"
+  )
+  
+  # replace the values in the article_node_list with the contents of the nodes and create a dataframe
+  article_df <- data.frame(lapply(article_node_list, extract_text, x_file = article_xml))
+  
+  # similarly, extract the data from the attribute
+  article_attr <- c(language = "//article") # pulling the attribute 
+  attr <- c("lang_id", "article-type")
+  
+  # create a dataframe of the attributes
+  attr_nodes <- data.frame(language = extract_text_attr(article_attr, article_xml, attr = attr[1]), 
+                      article_type = extract_text_attr(article_attr, article_xml, attr = attr[2]))
+  
+  # add the attributes
+  article_df <- merge(article_df, attr_nodes)
+  
+  # add the uid to the dataframe
+  uid <- extract_text("/articles/article/front//unique-article-id", test_xml)
+  article_df$uid <- uid
+  
+  return(article_df)
+}
+
+
+```
+
+### Add SciELO collection to the node list  
+
+```{r parse-journal-fun}
+# parsing xml for the journal dataframe 
+
+journal_df_fun <- function(test_xml) {
+  
+  journal_xml <- xml_new_root(xml_find_first(test_xml, "/articles/article/front"))
+
+  journal_node_list <- c(
+    journal_id = "//journal-id",
+    journal_title = "//journal-title",
+    issn = "//issn",
+    collection = "//collection",
+    publisher = "//publisher-name",
+    pub_month = "//month",
+    pub_year = "//year", 
+    volume = "//volume",
+    issue = "//issue",
+    first_page = "//fpage",
+    last_page = "//lpage",
+    uid = "//unique-article-id"
+  )
+  
+  journal_df <- data.frame(lapply(journal_node_list, extract_text, x_file = journal_xml))
+  
+  # add the uid to the dataframe
+  uid <- extract_text("/articles/article/front//unique-article-id", test_xml)
+  journal_df$uid <- uid
+  
+  return(journal_df)
+}
+```
+
+
+```{r parse-author-fun}
+
+# this one is extra fun
+
+# parsing xml for author information
+author_df_fun <- function(test_xml) {
+  
+  # added xml_new_root to actually subset the xml so that i could search it without pulling from other nodes in the references section who also had nodes with the same name 
+  # not sure how this might affect the speed of the function or if it will cause memory issues
+  author_xml <- xml_new_root(xml_find_first(test_xml, "/articles/article/front//contrib-group"))
+  
+  author_node_list <- c(
+    last_name = "//surname",
+    first_name = "//given-names"
+  )
+  
+  author_attr <- c(
+    author_number = "//xref"
+  )
+  attr <- "rid"
+  
+  # replace the values in the article_node_list with the contents of the nodes
+  new_node_list <- lapply(author_node_list, extract_author_text, x_file = author_xml)
+
+  # extract values from attributes
+  # attr_node_list <- extract_text_author_attr(author_attr, author_xml, attr = attr)
+  
+  # subset the authors into a list of separated nodes
+  contrib_nodes_list <- contrib_nodes_fun(author_xml)
+  attr_node_list <- lapply(contrib_nodes_list, test_extract_text_author_attr, nodes = author_attr, attr = attr)
+  
+  # create a dataframe
+  author_df <- data.frame(new_node_list)
+  
+  # add the uid to the dataframe
+  uid <- extract_text("/articles/article/front//unique-article-id", test_xml)
+  author_df$uid <- uid
+  
+  # add the attributes
+  # add_author_attr_error(author_df, attr_node_list, uid)
+  author_df$author_num <- attr_node_list
+
+  
+  return(author_df)
+}
+```
+
+
+
+```{r author-attr-error-fun}
+
+# for some reason this doesn't work anymore, although i don't need it
+add_author_attr_error <- function(author_df, attr_node_list, uid) {
+  tryCatch(author_df$author_number <- attr_node_list, 
+           error = function(c) {
+             c$message <- paste0(c$message, " (in ", uid, ")")
+             stop(c)
+           })
+  return(author_df)
+}
+```
+
+
+
+```{r parse-affiliation-fun}
+aff_df_fun <- function(test_xml) {
+  
+  # added xml_new_root to actually subset the xml so that i could search it without pulling from other nodes in the references section who also had nodes with the same name 
+  # not sure how this might affect the speed of the function or if it will cause memory issues
+  affiliation_xml <- xml_new_root(xml_find_first(test_xml, "/articles/article/front//article-meta"))
+  
+  aff_node_list <- c(
+    institution = "//institution",
+    country = "//country"
+  )
+  
+  aff_attr <- c(
+    aff_number = "//aff"
+  )
+  attr <- "id"
+  
+  # separate the nodes into separate elements of a list 
+  aff_nodes_xml_list <- aff_nodes_fun(affiliation_xml)
+  
+  seq <- seq_along(aff_nodes_xml_list)
+  # the extract_author_text_czero changes character(0) to NA, this is necessary for data.frame conversion
+  # this evaluates each of the nodes seperately so that institution and country are not mismatched when the columns are merged
+  new_node_list <- lapply(seq, function(x) {
+    lapply(aff_node_list, extract_author_text_czero, x_file = aff_nodes_xml_list[[x]])
+    }
+    )
+
+  # extract values from attributes
+  attr_node_list <- extract_text_author_attr(aff_attr, affiliation_xml, attr = attr)
+  
+  # create a dataframe by binding separate dataframes together
+  affiliation_df <- do.call(rbind, lapply(new_node_list, data.frame))
+  
+  # add the attributes
+  affiliation_df$aff_number <- attr_node_list # the affiliation number and the author number should match so that these two databases can be joined with the correct author/institution affiliations
+  
+  # add the uid to the dataframe
+  uid <- extract_text("/articles/article/front//unique-article-id", test_xml)
+  affiliation_df$uid <- uid
+  
+  return(affiliation_df)
+}
+```
+
+
+```{r parse-abstract-fun}
+
+abstract_df_fun <- function(test_xml) {
+  
+  abstract_xml <- xml_new_root(xml_find_first(test_xml, "/articles/article//article-meta"))
+  
+  abstract_node_list <- c(
+    abstract = "//abstract",
+    trans_abstract = "//trans-abstract"
+  )
+  
+  abstract_attr <- c(
+    abstract_lang_id = "//abstract"
+  )
+  attr <- "lang_id"
+  
+  # replace the values in the article_node_list with the contents of the nodes
+  new_node_list <- lapply(abstract_node_list, extract_author_text_czero, x_file = abstract_xml)
+
+  
+
+  # extract values from attributes
+  # the czero function turns character(0) into NA to avoid errors when i convert it to a dataframe
+  attr_node_list <- test_extract_text_author_attr_czero(abstract_xml, abstract_attr, attr = attr)
+  
+  
+  # create a dataframe
+  abstract_df <- data.frame(new_node_list)
+  
+  # add the attributes
+  abstract_df$lang_id <- attr_node_list 
+  
+  # add the uid to the dataframe
+  uid <- extract_text("/articles/article//unique-article-id", test_xml)
+  abstract_df$uid <- uid
+  
+  return(abstract_df)
+}
+```
+
+
+```{r parse-keyword-fun}
+
+# keyword_df_fun <- function(test_xml) {
+#   
+#   keyword_xml <- xml_new_root(xml_find_first(test_xml, "/articles/article/front//article-meta"))
+#   
+#   keyword_node_list <- c(
+#     keyword = "//kwd-group"
+#   )
+#   
+#   keyword_attr <- c(
+#     keyword_type = "//kwd-group", 
+#     keyword_lang_id = "//kwd-group"
+#   )
+#   attr <- "lang_id"
+#   attr2 <- "kwd-group-type"
+#   
+#   new_node_list <- lapply(keyword_node_list, extract_author_text, x_file = keyword_xml)
+#   
+#   attr_node_list <- c(
+#     extract_text_author_attr(keyword_attr, keyword_xml, attr = attr),
+#     extract_text_author_attr(keyword_attr, keyword_xml, attr = attr2))
+#   
+#   keyword_df <- data.frame(new_node_list)
+#   
+#   keyword_df$lang_id <- attr_node_list[1]
+#   keyword_df$keyword_type
+# }
+# 
+# 
+# # testing
+# keyword_xml <- xml_new_root(xml_find_first(test_xml, "/articles/article/front//article-meta"))
+# 
+# keyword_node_list <- c(
+#     keyword = "//kwd-group"
+#   )
+# 
+# keyword_attr <- c(
+#     keyword_type = "//kwd-group", 
+#     keyword_lang_id = "//kwd-group"
+#   )
+#   attr <- "lang_id"
+#   attr2 <- "kwd-group-type"
+#   
+#   kw_list <- lapply(keyword_node_list, extract_author_text, x_file = keyword_xml)
+#   
+# keyword_df <- data.frame(kw_list)
+# 
+#  attr_node_list <- c(
+#     extract_text_author_attr(keyword_attr, keyword_xml, attr = attr),
+#     extract_text_author_attr(keyword_attr, keyword_xml, attr = attr2))
+#   keyword_df$lang_id <- attr_node_list[1]
+#   keyword_df
+#   
+# attr_df <- c(
+#   lang_id = attr_node_list[1:2],
+#   keyword_type = attr_node_list[3:4]
+# )
+# 
+# data.frame(attr_df) # this is not working the way i want
+```
+
+
+```{r extract-text-fun}
+# this function extracts the text from a node, used in the parsing functions with lapply
+extract_text <- function(nodes, x_file) {
+  
+  xml_text(
+    xml_find_first(x_file, nodes)
+  )
+}
+```
+
+```{r extract-attr-fun}
+# extract the attributes 
+extract_text_attr <- function(nodes, x_file, attr) {
+  
+  xml_attr(
+    xml_find_first(x_file, nodes),
+    attr = attr
+  )
+}
+```
+
+```{r extract-authors-fun}
+extract_author_text <- function(nodes, x_file) {
+  
+  xml_text(
+    xml_find_all(x_file, nodes)
+  )
+}
+
+# change character(0) to NA
+extract_author_text_czero <- function(nodes, x_file) {
+  
+  xml_text <- xml_text(
+    xml_find_all(x_file, nodes)
+  )
+  
+  xml_text <- if(length(xml_text) == 0) {
+    
+    NA
+  } else {
+    xml_text
+  }
+  
+  return(xml_text)
+}
+
+# this was the old attribute extraction function 
+# extract_text_author_attr <- function(nodes, x_file, attr) {
+#   
+#   xml_attr(
+#     xml_find_all(x_file, nodes),
+#     attr = attr
+#   )
+# }
+
+# this is the new attribute extraction function that can handle authors with multiple institutional affiliations
+test_extract_text_author_attr <- function(x_file, nodes, attr) {
+  
+  xml_attr(
+    xml_find_all(x_file, nodes),
+    attr = attr
+  )
+}
+
+test_extract_text_author_attr_czero <- function(x_file, nodes, attr) {
+  
+  xml_attr <- xml_attr(
+    xml_find_all(x_file, nodes),
+    attr = attr
+  )
+  
+  xml_attr <- if(length(xml_attr) == 0) {
+    
+    NA
+  } else {
+    xml_attr
+  }
+  
+  return(xml_attr)
+}
+
+# this breaks up the contributers into separate xml nodes in a list so that i can loop over them with lapply in the author_df_fun function above 
+contrib_nodes_fun <- function(x_file) {
+  
+  nodes <- xml_find_all(x_file, "//contrib")
+  
+  seq <- seq_along(nodes)
+  
+  contrib_nodes_list <- lapply(seq, function(x) { xml_new_root(nodes[[x]]) })
+  
+  return(contrib_nodes_list)
+}
+```
+
+```{r aff-nodes-fun}
+
+aff_nodes_fun <- function(x_file) {
+  
+  nodes <- xml_find_all(x_file, "//aff")
+  
+  seq <- seq_along(nodes)
+  
+  aff_nodes_list <- lapply(seq, function(x) { xml_new_root(nodes[[x]]) })
+  
+  return(aff_nodes_list)
+}
+
+```
+
+```{r structure}
+xml_structure(test_xml)
+```
+
+```{r list-subjects}
+master_list <- list()
+
+for (path in files_xml_allscielo) {
+  
+  subject_list <- try(
+    tolower(
+      xml_text(
+        xml_find_all(
+          read_xml(path), "//subject"
+          )
+        )
+      )
+    )
+  
+  for (i in subject_list) {
+    if (i %in% master_list) {
+      master_list
+    } else {
+      master_list[[length(master_list) + 1]] <- i
+    }
+  }
+}
+
+# list of all subjects as collected from the xml files
+master_list
+
+# dataframe of all subjects as collected from the xml files
+all_subjects
+
+# in excel, i imported the all_subjects dataframe, and i deleted all of the subjects that weren't related to health sciences 
+health_subjects <- health_subjects$subjects
+
+```
+
+
+```{r list-journals}
+
+health_journals <- read_csv("journals-Fri-07-May-2021-17_03_54.csv")
+health_journals_list <- health_journals$journals
+
+# basically these are not all what i would call 'health-related' 
+# i have no idea how scielo classifies these journals, but the majority of articles in my dataframe once parsed was humanities and education 
+# that does not seem right!
+# so instead, it may be best to use the subject tags instead of the journal classificiations
+health_journals
+```
+
+
+```{r}
+
+my_data$authors %>%
+  group_by(last_name, first_name) %>%
+  count(last_name, first_name) %>%
+  arrange(desc(n))
+```
+
+
+```{r delete-old-files}
+
+# i am going to delete all the XML files that are older than 2008
+delete_old_files_fun <- function(xml_file_path) {
+  
+  xml_file <- read_xml(xml_file_path)
+  
+  year <- as.numeric(
+    as.character(
+    xml_text(
+    xml_find_first(
+      xml_file, "//year"
+      ))))
+  
+  if (year < 2008) {
+    
+    unlink(xml_file_path)
+  }
+}
+
+# deleting the files, hopefully this will speed up other functions a bit
+for (path in files_xml_allscielo) {
+  
+  try(delete_old_files_fun(path))
+}
+
+```
+
+
+
+
+
+
+
+
+
